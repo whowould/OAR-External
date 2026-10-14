@@ -2,7 +2,7 @@
 
 An external overlay for **One-Armed Robber** (Unreal Engine 4.27). It reads the game's memory from a separate
 process, draws an ESP on a transparent click-through window over the game, and uses the
-[Nebula ImGui menu](../menu) as its control panel.
+[Nebula ImGui menu](https://github.com/whowould/Nebula-IMGUI) as its control panel.
 
 | Feature | What it does |
 |---|---|
