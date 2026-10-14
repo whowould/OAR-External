@@ -2,13 +2,19 @@
 
 An external overlay for **One-Armed Robber** (Unreal Engine 4.27). It reads the game's memory from a separate
 process, draws an ESP on a transparent click-through window over the game, and uses the
-[Nebula ImGui menu](https://github.com/whowould/Nebula-IMGUI) as its control panel.
+[Nebula ImGui menu](../menu) as its control panel.
 
 | Feature | What it does |
 |---|---|
 | **Camera ESP** | Security cameras: box, `CAM #n` label, state (working / EMP / destroyed / sees you / in use), distance and a view-direction line. Destroyed cameras are hidden by default (*ESP > Cameras > Hide destroyed*). |
 | **Guard ESP** | Guards only (`NPC_Guard`; police, SWAT and other NPCs are never drawn): box, health bar, state (patrolling, investigating, alert, escorting, tied up, EMP), distance, head marker, snaplines. |
+| **Ghost** | NPCs can look straight at you and never react. Guards and police are blinded and deafened, security cameras skip their checks, and any spot timer, chase or escort aimed at you is dropped. Everything it changes is put back when you turn it off. |
 | **Force guard check-in** | A dead guard drops a phone that raises the alarm unless it reaches a check-in point before its timer (15 s) ends. *Check in now* (or *Auto*, at a chosen time left) clears the phone's `Active?` flag, which is exactly what the check-in point does. Dropped phones and check-in points can be marked on the ESP too. |
+
+> **A note on Ghost.** It defeats the whole point of the game and makes it boring. One-Armed Robber is about
+> sneaking past guards and cameras, and Ghost removes that: with it on, nothing in the level can threaten you,
+> so there is nothing left to plan around, and the heist plays itself. It is here because it was asked for, and it
+> is off by default. Leave it off if you want the game to stay fun.
 
 ## Build
 
@@ -36,11 +42,16 @@ build\oar_external.exe
 | F6 | Toggle ESP |
 | F7 | Check in now |
 | F8 | Toggle auto check-in |
+| F9 | Toggle Ghost |
 
 All of them can be rebound in *Settings > Keybinds*. Settings autosave; named configs (*Configs* page) are plain
 text files in `%LOCALAPPDATA%\OAR External\configs` and can be exported to / imported from the clipboard.
 
-Check-in takes effect where the phone logic runs: **while you host or play solo**. The phone's beeper and highlight
+Check-in and Ghost take effect where the NPC logic runs: **while you host or play solo**. Ghost works at the sensor level,
+which cannot tell players apart, so your teammates are ignored too; an alarm caused by something else (a body, a
+destroyed camera) can still send guards looking for you.
+
+Check-in takes effect where the phone logic runs. The phone's beeper and highlight
 belong to `StopAlertMulti()`, which cannot be called from outside, so it keeps beeping until it is picked up.
 
 ## How it works
@@ -67,9 +78,16 @@ belong to `StopAlertMulti()`, which cannot be called from outside, so it keeps b
   names and class -> entity kind are cached in memory; the actor list is walked every 0.5 s and only unseen
   actors cost a lookup; each tracked entity is refreshed with **one bulk read** (two for guards). The camera view
   is read on every 4 ms tick, entities every 10 ms; a tick costs about 0.1 ms in a heist.
-* **Safe writes.** The only write the tool ever does is clearing `GuardPhone_C.Active?`. It is skipped unless the
-  property resolved as a Blueprint `BoolProperty`, and it re-checks that the phone is still the same live object
-  right before writing. Property types are verified during reflection, so a changed variable type fails safe.
+* **Ghost** (`src/features/ghost.*`) follows the game's own detection logic, decoded from the Blueprint bytecode:
+  guards see through a separate `SensingActor_C` child actor and hear through their own `PawnSensing`; police use
+  `PawnSensing` too; security cameras run `CameraCheck()` every tick unless `Ignored?` is set. Ghost clears
+  `bSeePawns`/`bHearNoises` on those components, sets `Ignored?` on cameras, and drops `SpottedPlayer`,
+  `TargetPlayer` and `EscortingPlayer` that point at the local pawn (so a spot timer already running ends with
+  nobody to spot). Each original value is remembered and restored when Ghost (or one of its parts) is switched off
+  and when the tool exits; objects that are gone are never written to.
+* **Safe writes.** The tool only ever writes the few flags of Check-in and Ghost. Each write is skipped unless the
+  property resolved with the expected type, and re-checks that the target is still the same live object right
+  before writing. Property types are verified during reflection, so a changed variable type fails safe.
 * **Pixel-exact ESP.** The overlay is the game's client area at 1:1, so everything is snapped to whole pixels
   (`src/overlay/pixel.h`): every rectangle corner goes through `std::round`; boxes are filled integer strips
   (black outside / colour / black inside, no strokes), lines are centred on pixel centres, font sizes and line
@@ -88,14 +106,16 @@ belong to `StopAlertMulti()`, which cannot be called from outside, so it keeps b
 | `build\oar_external.exe --shots <dir>` | Renders every menu page to `<dir>\view_N.bmp`. |
 | `build\oar_external.exe --esp-shot <file>` | Renders the demo ESP offscreen (default settings, 32-bit BMP with alpha) so the exact pixels can be inspected. |
 | `build\oar_probe.exe [seconds] [debug]` | Console view of what the scanner sees (link state, camera, entities, timings). |
-| `build\oar_selftest.exe` | Checks that need no game: pattern matching, settings round-trip, config store, projection math. |
+| `build\oar_probe.exe 10 ghost` | Runs a Ghost scenario against the live game (off, on for 4 s, off). |
+| `build\oar_selftest.exe` | Checks that need no game: pattern matching, settings round-trip, config store, projection math, pixel snapping, and Ghost against fake NPC memory. |
+| `OAR_DATA_DIR=<folder>` | Redirects settings, configs and cache, so tests and screenshots leave real data alone. |
 | *ESP > Style > Mark every actor* | Draws a dot and class name for each nearby actor: find what something is called, check the projection. |
 
 ## Layout
 
 ```
 src/game/      process access, Unreal memory model (names, reflection), scanner thread, snapshot types
-src/features/  check-in
+src/features/  check-in, ghost
 src/overlay/   overlay window, ESP painter, projection
 src/menu/      Nebula shell and pages for this app, config store
 src/settings.* every user setting, in one visited list (defaults, save, load, export)

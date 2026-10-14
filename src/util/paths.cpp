@@ -24,6 +24,13 @@ std::wstring Wide(const std::string& s)
 std::string DataDir()
 {
     static const std::string dir = [] {
+        // OAR_DATA_DIR redirects everything (settings, configs, cache): tests and screenshots must not touch real data.
+        wchar_t overridden[MAX_PATH] = {};
+        if (::GetEnvironmentVariableW(L"OAR_DATA_DIR", overridden, MAX_PATH) > 0)
+        {
+            ::CreateDirectoryW(overridden, nullptr);
+            return Utf8(overridden);
+        }
         PWSTR known = nullptr;
         std::wstring base;
         if (SUCCEEDED(::SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &known)))

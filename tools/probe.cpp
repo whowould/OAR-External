@@ -1,17 +1,20 @@
 // Development aid: runs the scanner against the live game and prints what it sees once per second.
-//   oar_probe.exe [seconds]       (needs the same elevation as the game)
+//   oar_probe.exe [seconds] [debug|ghost]   (needs the same elevation as the game)
+//   "ghost" runs a 10 s scenario: Ghost off, ON for seconds 2-6, off again (restores everything).
 #include "game/scanner.h"
 
 #include <windows.h>
 
 #include <cstdio>
 #include <cstdlib>
+#include <string>
 
 int main(int argc, char** argv)
 {
     const int seconds = argc > 1 ? atoi(argv[1]) : 5;
     Settings settings;
-    settings.debugActors = argc > 2;
+    const bool ghostScenario = argc > 2 && std::string(argv[2]) == "ghost";
+    settings.debugActors = argc > 2 && std::string(argv[2]) == "debug";
 
     scene::Scanner scanner;
     scanner.setSettings(settings);
@@ -20,6 +23,13 @@ int main(int argc, char** argv)
     static const char* kLink[] = { "Detached", "AccessDenied", "Incompatible", "Waiting", "Ready" };
     for (int i = 0; i < seconds; i++)
     {
+        if (ghostScenario)
+        {
+            settings.ghost = i >= 2 && i < 6;
+            scanner.setSettings(settings);
+            printf("[%d] ghost %s\n", i, settings.ghost ? "ON" : "off");
+            fflush(stdout);
+        }
         ::Sleep(1000);
         const scene::SnapshotPtr s = scanner.snapshot();
         printf("[%d] link=%s detail='%s' pid=%u build=%s world=%s\n", i, kLink[(int)s->link], s->detail.c_str(), s->pid, s->buildId.c_str(), s->worldName.c_str());
@@ -39,6 +49,7 @@ int main(int argc, char** argv)
             const auto& st = s->stats;
             printf("    tick=%.3fms %.0fHz discover=%.2fms reads/s=%.0f names=%zu offsets=%zu cache(hit=%llu miss=%llu) actors=%zu\n", st.tickMs, st.tickHz, st.discoverMs,
                    st.readsPerSec, st.names, st.offsetsCached, (unsigned long long)st.cacheHits, (unsigned long long)st.cacheMisses, st.actorsSeen);
+            printf("    ghosted NPCs: %zu\n", st.ghosted);
         }
         for (const auto& e : scanner.takeEvents())
             printf("    event: %s %s\n", e.text.c_str(), e.highlight.c_str());

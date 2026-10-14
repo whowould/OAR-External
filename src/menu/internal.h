@@ -84,6 +84,7 @@ void OverviewActivity();
 void EspGuards();
 void EspCameras();
 void EspStyle();
+void HeistGhost();
 void HeistCheckIn();
 void PageConfigs();
 void SettingsAppearance();

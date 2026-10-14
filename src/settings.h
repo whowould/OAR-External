@@ -38,6 +38,11 @@ struct Settings
     float    phoneColor[4]    = { 0.62f, 0.45f, 1.00f, 1.0f };
     float    terminalColor[4] = { 0.30f, 0.90f, 0.55f, 1.0f };
 
+    // Ghost: NPCs ignore you
+    bool     ghost = false;
+    ImGuiKey ghostKey = ImGuiKey_F9;
+    bool     ghostGuards = true, ghostCameras = true, ghostPolice = true;
+
     // Overlay style
     float boxThickness = 1.0f, textScale = 1.0f, opacity = 1.0f; // thickness in whole pixels
     bool  outline = true;
@@ -92,6 +97,12 @@ template <class V> void Visit(Settings& s, V&& v)
     v("checkin.autoKey", s.checkinAutoKey);
     v("checkin.phoneColor", s.phoneColor);
     v("checkin.terminalColor", s.terminalColor);
+
+    v("ghost", s.ghost);
+    v("ghost.key", s.ghostKey);
+    v("ghost.guards", s.ghostGuards);
+    v("ghost.cameras", s.ghostCameras);
+    v("ghost.police", s.ghostPolice);
 
     v("style.thickness", s.boxThickness);
     v("style.textScale", s.textScale);

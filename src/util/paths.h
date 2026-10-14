@@ -14,7 +14,8 @@ inline double Now()
 std::wstring Wide(const std::string& utf8);
 std::string  Utf8(const std::wstring& wide);
 
-// %LOCALAPPDATA%\OAR External (created on first use), UTF-8, no trailing separator.
+// %LOCALAPPDATA%\OAR External, or the folder in %OAR_DATA_DIR% if that is set (created on first use), UTF-8,
+// no trailing separator.
 std::string DataDir();
 // Subdirectory of DataDir() (created on first use).
 std::string DataSubDir(const char* name);

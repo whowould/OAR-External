@@ -1,6 +1,7 @@
 #include "game/scanner.h"
 
 #include "features/checkin.h"
+#include "features/ghost.h"
 #include "game/cache.h"
 #include "game/process.h"
 #include "game/unreal.h"
@@ -24,11 +25,12 @@ namespace
 constexpr const wchar_t* kGameExe = L"OAR-Win64-Shipping.exe";
 constexpr double kTickPeriod = 1.0 / 250.0;   // camera view (changes with every mouse movement)
 constexpr double kEntityPeriod = 1.0 / 100.0; // guards, cameras, phones, terminals
+constexpr double kGhostPeriod = 1.0 / 33.0;   // Ghost writes
 constexpr double kDiscoverPeriod = 0.5;       // actor list walk
 constexpr uint32_t kDestroyedFlags = 0x00008000u | 0x00010000u; // RF_BeginDestroyed | RF_FinishDestroyed
 constexpr size_t kDebugActorLimit = 800;
 
-enum class Kind : uint8_t { None, Guard, Camera, Phone, Terminal };
+enum class Kind : uint8_t { None, Guard, Camera, Phone, Terminal, Police, Sensor }; // Police and Sensor are only tracked for Ghost
 
 // Blueprint classes we track. Matching walks the super chain, so subclasses are picked up too.
 struct ClassKind { const char* name; Kind kind; };
@@ -37,6 +39,8 @@ constexpr ClassKind kClassKinds[] = {
     { "CameraBP_C", Kind::Camera },
     { "GuardPhone_C", Kind::Phone },
     { "GuardScanPoint_C", Kind::Terminal },
+    { "NPC_Police_base_C", Kind::Police },
+    { "SensingActor_C", Kind::Sensor }, // a guard's eyes: a child actor holding its PawnSensing
 };
 
 bool Finite(const ue::Vec3& v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); }
@@ -71,6 +75,7 @@ struct EngineFields
     ue::Field localPlayers;                                         // UGameInstance
     ue::Field aspectAxis, playerController;                         // ULocalPlayer / UPlayer
     ue::Field cameraManager, actorRoot;                             // APlayerController / AActor
+    ue::Field acknowledgedPawn;                                     // APlayerController: the local player's pawn (optional: only Ghost uses it)
     ue::Field povLocation, povRotation, povFov, povAspect, povConstrain; // CameraCachePrivate.POV.*
     uint32_t  levelActors = 0, componentToWorld = 0;                // not reflected, discovered
 
@@ -142,6 +147,7 @@ struct Scanner::Impl
     Settings           settings;
     std::vector<Event> events;
     features::CheckIn  checkIn;
+    features::Ghost    ghost;
 
     std::thread       thread;
     std::atomic<bool> stopping{ false };
@@ -166,6 +172,10 @@ struct Scanner::Impl
     uintptr_t world = 0;
     std::string worldName;
     uintptr_t pcm = 0;           // APlayerCameraManager of the local player
+    uintptr_t pcAddr = 0;        // the local APlayerController
+    features::GhostLayout ghostLayout;
+    double ghostLayoutRetryAt = 0.0, lastGhost = -1.0;
+    size_t ghosted = 0;          // NPCs Ghost is currently working on
     uint8_t   axisConstraint = 0;
     HWND      gameWindow = nullptr;
 
@@ -213,6 +223,8 @@ struct Scanner::Impl
     bool readTransform(uintptr_t component, ue::Transform& out) const;
     bool readBlock(uintptr_t actor, uint32_t extent, const Tracked& t);
     void refreshEntities(const Settings& cfg);
+    void runGhost(const Settings& cfg);
+    void resolveGhostLayout(const features::GhostWorld& world);
     bool refreshGuard(uintptr_t addr, Tracked& t, Snapshot& out);
     bool refreshCamera(uintptr_t addr, Tracked& t, Snapshot& out);
     bool refreshPhone(uintptr_t addr, Tracked& t, Snapshot& out);
@@ -243,6 +255,8 @@ void Scanner::Impl::run()
         }
     }
     if (timer) ::CloseHandle(timer);
+    if (proc.attached() && ghost.engaged() && proc.alive())
+        ghost.restore(proc, [this](uintptr_t actor) { return stillAlive(actor); }); // leave the game as we found it
     cache.close();
 }
 
@@ -305,7 +319,9 @@ void Scanner::Impl::detachAll()
     globals = {};
     initialised = false;
     layoutVerified = false;
-    world = pcm = 0;
+    world = pcm = pcAddr = 0;
+    ghost.forget();
+    lastGhost = -1;
     worldName.clear();
     classKinds.clear();
     actors.clear();
@@ -384,6 +400,7 @@ bool Scanner::Impl::resolveEngineFields()
     const uintptr_t pcCls = refl.classOf(pc);
     eng.cameraManager = refl.field(pcCls, "PlayerCameraManager", "ObjectProperty");
     eng.actorRoot = refl.field(pcCls, "RootComponent", "ObjectProperty");
+    eng.acknowledgedPawn = refl.field(pcCls, "AcknowledgedPawn", "ObjectProperty");
     if (!eng.cameraManager || !eng.actorRoot) return false;
 
     const uintptr_t cm = proc.read<uintptr_t>(pc + eng.cameraManager.offset);
@@ -407,7 +424,8 @@ bool Scanner::Impl::resolveEngineFields()
 void Scanner::Impl::onWorldChanged(uintptr_t newWorld)
 {
     world = newWorld;
-    pcm = 0;
+    pcm = pcAddr = 0;
+    ghost.forget(); // the objects it remembered belong to the old world
     classKinds.clear();
     actors.clear();
     tracked.clear();
@@ -427,6 +445,7 @@ bool Scanner::Impl::resolveViewChain()
     const auto players = gi ? proc.read<ue::ArrayHeader>(gi + eng.localPlayers.offset) : ue::ArrayHeader{};
     const uintptr_t lp = players.num > 0 ? proc.read<uintptr_t>(players.data) : 0;
     const uintptr_t pc = lp ? proc.read<uintptr_t>(lp + eng.playerController.offset) : 0;
+    pcAddr = pc;
     pcm = pc ? proc.read<uintptr_t>(pc + eng.cameraManager.offset) : 0;
     axisConstraint = lp ? proc.read<uint8_t>(lp + eng.aspectAxis.offset) : 0;
     return pcm != 0;
@@ -552,6 +571,9 @@ bool Scanner::Impl::ensureFields(Kind kind, uintptr_t cls, uintptr_t instance)
         f.extent = std::max(ue::Extent({ f.activated }), eng.actorRoot.offset + 8);
         return f.ready = true;
     }
+    case Kind::Police:
+    case Kind::Sensor:
+        return true; // tracked for Ghost only; its own fields are resolved from the first instance
     default:
         return false;
     }
@@ -771,6 +793,100 @@ bool Scanner::Impl::refreshTerminal(uintptr_t addr, Tracked& t, Snapshot& out)
 }
 
 //-----------------------------------------------------------------------------
+// Ghost
+//-----------------------------------------------------------------------------
+
+// Finds the fields Ghost writes, from the first live instance of each NPC kind. Whatever cannot be resolved
+// yet (no police on the map, say) stays unresolved and that part of Ghost simply does nothing until it can be.
+void Scanner::Impl::resolveGhostLayout(const features::GhostWorld& w)
+{
+    features::GhostLayout& g = ghostLayout;
+    const auto firstOf = [this](Kind kind, uintptr_t& addr, uintptr_t& cls) {
+        for (const auto& [a, t] : tracked)
+            if (t.kind == kind)
+            {
+                addr = a;
+                cls = t.cls;
+                return true;
+            }
+        return false;
+    };
+    // PawnSensing and SpotPlayer components are the same classes everywhere: take their layout from any instance.
+    const auto learnSensing = [&](uintptr_t owner, const ue::Field& sensingField) {
+        if (g.seePawns && g.hearNoises) return;
+        const uintptr_t comp = sensingField ? proc.read<uintptr_t>(owner + sensingField.offset) : 0;
+        if (!comp) return;
+        const uintptr_t cls = refl.classOf(comp);
+        g.seePawns = refl.field(cls, "bSeePawns", "BoolProperty");
+        g.hearNoises = refl.field(cls, "bHearNoises", "BoolProperty");
+    };
+    const auto learnSpot = [&](uintptr_t owner, const ue::Field& spotField) {
+        if (g.spottedPlayer) return;
+        const uintptr_t comp = spotField ? proc.read<uintptr_t>(owner + spotField.offset) : 0;
+        if (comp) g.spottedPlayer = refl.field(refl.classOf(comp), "SpottedPlayer", "ObjectProperty");
+    };
+
+    uintptr_t addr = 0, cls = 0;
+    if (firstOf(Kind::Guard, addr, cls))
+    {
+        g.guardEars = refl.field(cls, "PawnSensing", "ObjectProperty");
+        g.guardSpot = refl.field(cls, "SpotPlayerComponent", "ObjectProperty");
+        g.guardTarget = refl.field(cls, "TargetPlayer", "ObjectProperty");
+        g.guardEscorting = refl.field(cls, "EscortingPlayer", "ObjectProperty");
+        g.guardAware = refl.field(cls, "Sensing?", "BoolProperty");
+        learnSensing(addr, g.guardEars);
+        learnSpot(addr, g.guardSpot);
+    }
+    if (firstOf(Kind::Sensor, addr, cls))
+    {
+        g.sensorEyes = refl.field(cls, "PawnSensing", "ObjectProperty");
+        learnSensing(addr, g.sensorEyes);
+    }
+    if (firstOf(Kind::Police, addr, cls))
+    {
+        g.policeEyes = refl.field(cls, "PawnSensing", "ObjectProperty");
+        g.policeTarget = refl.field(cls, "TargetPlayer", "ObjectProperty");
+        g.policeAware = refl.field(cls, "Sensing?", "BoolProperty");
+        learnSensing(addr, g.policeEyes);
+    }
+    if (firstOf(Kind::Camera, addr, cls))
+    {
+        g.cameraIgnored = cameraF.ignored;
+        g.cameraSpot = refl.field(cls, "SpotPlayerComponent", "ObjectProperty");
+        learnSpot(addr, g.cameraSpot);
+    }
+    if (!g.pawnSus && w.localPawn)
+        g.pawnSus = refl.field(refl.classOf(w.localPawn), "Sus?", "BoolProperty");
+}
+
+// Applies Ghost (or undoes it) to everything tracked right now.
+void Scanner::Impl::runGhost(const Settings& cfg)
+{
+    if (!cfg.ghost && !ghost.engaged()) return; // nothing to apply and nothing to give back
+
+    features::GhostWorld w;
+    for (const auto& [addr, t] : tracked)
+        switch (t.kind)
+        {
+        case Kind::Guard:  w.guards.push_back(addr); break;
+        case Kind::Camera: w.cameras.push_back(addr); break;
+        case Kind::Police: w.police.push_back(addr); break;
+        case Kind::Sensor: w.sensors.push_back(addr); break;
+        default: break;
+        }
+    w.localPawn = pcAddr && eng.acknowledgedPawn ? proc.read<uintptr_t>(pcAddr + eng.acknowledgedPawn.offset) : 0;
+
+    const double now = util::Now();
+    if (cfg.ghost && now >= ghostLayoutRetryAt)
+    {
+        ghostLayoutRetryAt = now + 2.0; // resolution is cached on disk, but there is no need to redo it every tick
+        resolveGhostLayout(w);
+    }
+    const auto alive = [this](uintptr_t actor) { return stillAlive(actor); };
+    ghosted = ghost.tick(proc, ghostLayout, cfg, w, alive);
+}
+
+//-----------------------------------------------------------------------------
 // One tick
 //-----------------------------------------------------------------------------
 
@@ -784,6 +900,11 @@ void Scanner::Impl::refreshEntities(const Settings& cfg)
 
     for (auto it = tracked.begin(); it != tracked.end();)
     {
+        if (it->second.kind == Kind::Police || it->second.kind == Kind::Sensor) // Ghost-only: validated by discovery
+        {
+            ++it;
+            continue;
+        }
         bool ok = false;
         switch (it->second.kind)
         {
@@ -867,6 +988,11 @@ double Scanner::Impl::tick()
         lastEntities = now;
         refreshEntities(cfg);
     }
+    if (now - lastGhost >= kGhostPeriod)
+    {
+        lastGhost = now;
+        runGhost(cfg);
+    }
     snap->guards = entities.guards;
     snap->cameras = entities.cameras;
     snap->phones = entities.phones;
@@ -899,6 +1025,7 @@ double Scanner::Impl::tick()
     st.cacheHits = cache.hits();
     st.cacheMisses = cache.misses();
     st.actorsSeen = actorsSeen;
+    st.ghosted = ghosted;
 
     publish(std::move(snap));
     return kTickPeriod;

@@ -119,6 +119,11 @@ void OverviewStatus()
         KeyValue("Guard phones", v);
         snprintf(v, sizeof(v), "%d", (int)snap.terminals.size());
         KeyValue("Check-in points", v);
+        if (S.cfg.ghost)
+            snprintf(v, sizeof(v), "%zu NPCs ignoring you", snap.stats.ghosted);
+        else
+            snprintf(v, sizeof(v), "off");
+        KeyValue("Ghost", v);
     }
     EndGroup();
 

@@ -10,6 +10,7 @@ namespace menu
 void  Init(scene::Scanner* scanner);
 void  Shutdown();          // writes the autosave
 void  Render();
+void  Sync();              // publish edited settings to the scanner / disk (call every loop iteration)
 float IdleDelay();         // seconds until another frame is needed if no input arrives (0 = keep animating)
 void  OnDpiChanged();      // call after theme::SetDpi()
 int   ViewCount();         // every page/sub-tab combination (used by --shots)

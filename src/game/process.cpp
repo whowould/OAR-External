@@ -157,6 +157,18 @@ AttachResult Process::attach(const wchar_t* exeName)
     return AttachResult::Ok;
 }
 
+bool Process::attachSelf()
+{
+    detach();
+    HANDLE self = nullptr;
+    if (!::DuplicateHandle(::GetCurrentProcess(), ::GetCurrentProcess(), ::GetCurrentProcess(), &self, 0, FALSE, DUPLICATE_SAME_ACCESS))
+        return false;
+    handle_ = self;
+    pid_ = ::GetCurrentProcessId();
+    base_ = reinterpret_cast<uintptr_t>(::GetModuleHandleW(nullptr));
+    return true;
+}
+
 void Process::detach()
 {
     if (handle_)

@@ -35,6 +35,7 @@ add_library(oar_core STATIC
     src/game/unreal.cpp
     src/game/scanner.cpp
     src/features/checkin.cpp
+    src/features/ghost.cpp
     src/settings.cpp
 )
 target_include_directories(oar_core PUBLIC src ${IMGUI_DIR})

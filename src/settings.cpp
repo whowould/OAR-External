@@ -118,5 +118,6 @@ void Sanitize(Settings& s)
     s.espKey = key(s.espKey, defaults.espKey);
     s.checkinKey = key(s.checkinKey, defaults.checkinKey);
     s.checkinAutoKey = key(s.checkinAutoKey, defaults.checkinAutoKey);
+    s.ghostKey = key(s.ghostKey, defaults.ghostKey);
 }
 }

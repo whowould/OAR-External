@@ -2,6 +2,7 @@
 #include "menu/internal.h"
 
 #include "host.h"
+#include "util/paths.h"
 #include "imgui_internal.h"
 
 #include <windows.h>
@@ -20,7 +21,7 @@ namespace menu
 const NavItem kNav[Page_COUNT] = {
     { icon::Home,    "Overview", { "Status", "Activity" },                   2 },
     { icon::Eye,     "ESP",      { "Guards", "Cameras", "Style" },           3 },
-    { icon::Shield,  "Heist",    {},                                         0 },
+    { icon::Shield,  "Heist",    { "Ghost", "Check-in" },                    2 },
     { icon::Folder,  "Configs",  {},                                         0 },
     { icon::Sliders, "Settings", { "Appearance", "Keybinds", "About" },      3 },
 };
@@ -117,7 +118,7 @@ static void DrawView(int page, int sub)
     {
     case Page_Overview: sub == 0 ? OverviewStatus() : OverviewActivity(); break;
     case Page_Esp:      sub == 0 ? EspGuards() : sub == 1 ? EspCameras() : EspStyle(); break;
-    case Page_Heist:    HeistCheckIn(); break;
+    case Page_Heist:    sub == 0 ? HeistGhost() : HeistCheckIn(); break;
     case Page_Configs:  PageConfigs(); break;
     case Page_Settings: sub == 0 ? SettingsAppearance() : sub == 1 ? SettingsKeybinds() : SettingsAbout(); break;
     }
@@ -469,17 +470,21 @@ static std::string s_published;  // text form of the settings the scanner / disk
 static double s_dirtySince = -1.0;
 
 // Pushes edited settings to the scanner immediately and to disk once they have been stable for a second.
-static void SyncSettings()
+// Called by the host loop every iteration, not only from Render(): while the menu window is minimized nothing
+// renders, but hotkeys still change settings (Ghost, auto check-in) and the scanner and the disk must see them.
+// Uses the wall clock: ImGui's time only advances when a frame is drawn.
+void Sync()
 {
     CaptureTheme();
     const std::string text = settings::ToText(S.cfg);
+    const double now = util::Now();
     if (text != s_published)
     {
         s_published = text;
         if (S.scanner) S.scanner->setSettings(S.cfg);
-        s_dirtySince = ImGui::GetTime();
+        s_dirtySince = now;
     }
-    if (s_dirtySince >= 0.0 && ImGui::GetTime() - s_dirtySince > 1.0)
+    if (s_dirtySince >= 0.0 && now - s_dirtySince > 1.0)
     {
         store::SaveCurrent(S.cfg);
         s_dirtySince = -1.0;
@@ -566,6 +571,6 @@ void Render()
     if (S.showDemo)
         ImGui::ShowDemoWindow(&S.showDemo);
     RenderToasts();
-    SyncSettings();
+    Sync();
 }
 }

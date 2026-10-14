@@ -218,7 +218,8 @@ static void PollHotkeys(const scene::Snapshot& snap)
     static keys::Edges edges;
     Settings& cfg = menu::Cfg();
     // Sample every key every frame so edges stay correct, but only act when one of our windows or the game is in front.
-    const bool toggleEsp = edges.pressed(cfg.espKey), checkIn = edges.pressed(cfg.checkinKey), toggleAuto = edges.pressed(cfg.checkinAutoKey);
+    const bool toggleEsp = edges.pressed(cfg.espKey), checkIn = edges.pressed(cfg.checkinKey), toggleAuto = edges.pressed(cfg.checkinAutoKey),
+               toggleGhost = edges.pressed(cfg.ghostKey);
     const HWND front = ::GetForegroundWindow();
     const bool ours = front == g_hwnd || front == g_overlay.hwnd() || (snap.gameWindow && front == snap.gameWindow) || g_demo;
     if (!ours || ui::IsCapturingKey() || ImGui::GetIO().WantTextInput)
@@ -233,6 +234,11 @@ static void PollHotkeys(const scene::Snapshot& snap)
     {
         g_scanner.requestCheckIn();
         menu::Notice(ui::Toast_Info, ui::icon::Shield, "Check-in", "requested");
+    }
+    if (toggleGhost)
+    {
+        cfg.ghost = !cfg.ghost;
+        menu::Notice(ui::Toast_Info, ui::icon::Sparkle, "Ghost", cfg.ghost ? "enabled" : "disabled");
     }
     if (toggleAuto)
     {
@@ -416,6 +422,7 @@ int WINAPI WinMain(HINSTANCE hinst, HINSTANCE, LPSTR, int)
         gameRunning = g_demo || snap->link != scene::Link::Detached;
         UpdateTopmost(gameRunning);
         PollHotkeys(*snap);
+        menu::Sync(); // hotkeys change settings even while the menu window is minimized and not rendering
 
         // Menu: skipped while minimized, fully covered or while its device is being rebuilt
         bool menuCanRender = !g_deviceRemoved;

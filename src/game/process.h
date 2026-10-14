@@ -35,6 +35,8 @@ public:
     ~Process() { detach(); }
 
     AttachResult attach(const wchar_t* exeName);
+    // Attaches to the calling process itself (lets tests exercise code that reads and writes "game" memory).
+    bool attachSelf();
     void detach();
     bool attached() const { return handle_ != nullptr; }
     bool alive() const;

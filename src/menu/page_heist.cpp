@@ -11,6 +11,45 @@ using namespace ui;
 
 namespace menu
 {
+void HeistGhost()
+{
+    Settings& c = S.cfg;
+    const scene::Snapshot& snap = *S.snap;
+    if (!BeginColumns("##ghost", 0.5f))
+        return;
+
+    if (BeginGroup("##g_ghost", icon::Sparkle, "Ghost"))
+    {
+        char v[64];
+        if (snap.link != scene::Link::Ready) snprintf(v, sizeof(v), "game not ready");
+        else if (!c.ghost)                   snprintf(v, sizeof(v), "off");
+        else if (snap.stats.ghosted == 0)    snprintf(v, sizeof(v), "no NPCs yet");
+        else                                 snprintf(v, sizeof(v), "%zu NPCs ignoring you", snap.stats.ghosted);
+        KeyValue("Status", v);
+        ImGui::Dummy(ImVec2(0, dp(2)));
+        CheckboxKey("Ghost", &c.ghost, &c.ghostKey);
+        Divider();
+        ImGui::BeginDisabled(!c.ghost);
+        Checkbox("Guards (sight and hearing)", &c.ghostGuards);
+        Checkbox("Security cameras", &c.ghostCameras);
+        Checkbox("Police", &c.ghostPolice);
+        ImGui::EndDisabled();
+    }
+    EndGroup();
+
+    NextColumn();
+    if (BeginGroup("##g_ghosthow", icon::Info, "How it works"))
+        Note("NPCs can look straight at you and never react. Guards and police are blinded and deafened, security cameras "
+             "skip their checks, and any spot timer, chase or escort aimed at you is dropped. "
+             "Everything it changes is put back when you turn it off.");
+    EndGroup();
+    if (BeginGroup("##g_ghostlimits", icon::Warning, "Limits"))
+        Note("Works while you host or play solo. NPCs cannot tell players apart, so your teammates are ignored too. "
+             "An alarm caused by something else (a body, a destroyed camera) can still send guards looking for you.");
+    EndGroup();
+    EndColumns();
+}
+
 void HeistCheckIn()
 {
     Settings& c = S.cfg;

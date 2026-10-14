@@ -40,6 +40,8 @@ void SettingsKeybinds()
     {
         if (Keybind("Toggle ESP", &c.espKey))
             Log(icon::Keyboard, "Toggle ESP bound to %s", KeyLabel(c.espKey));
+        if (Keybind("Toggle Ghost", &c.ghostKey))
+            Log(icon::Keyboard, "Toggle Ghost bound to %s", KeyLabel(c.ghostKey));
         if (Keybind("Check in now", &c.checkinKey))
             Log(icon::Keyboard, "Check in now bound to %s", KeyLabel(c.checkinKey));
         if (Keybind("Toggle auto check-in", &c.checkinAutoKey))

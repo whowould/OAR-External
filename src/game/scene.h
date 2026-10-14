@@ -79,6 +79,7 @@ struct Stats
     size_t   names = 0, offsetsCached = 0;
     uint64_t cacheHits = 0, cacheMisses = 0;
     size_t   actorsSeen = 0;
+    size_t   ghosted = 0; // NPCs Ghost is currently working on
 };
 
 struct Event // something worth telling the user (check-in forced, world changed...)
